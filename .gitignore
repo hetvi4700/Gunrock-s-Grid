@@ -1,0 +1,6 @@
+.env
+davis_housing.db
+__pycache__/
+*.pyc
+.venv/
+.DS_Store
