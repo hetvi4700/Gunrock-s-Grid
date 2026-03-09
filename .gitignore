@@ -1,5 +1,7 @@
 .env
 davis_housing.db
+scraped_listings.csv
+enriched_listings.csv
 __pycache__/
 *.pyc
 .venv/
