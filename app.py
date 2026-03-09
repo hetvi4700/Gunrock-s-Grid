@@ -8,17 +8,17 @@ import streamlit as st
 # PAGE CONFIG
 # =========================================================
 st.set_page_config(
-    page_title="Aggie Housing Intelligence Engine",
+    page_title="Gunrocks-Grid-Aggie Housing Analysis",
     layout="wide"
 )
 
-st.title("Aggie Housing Intelligence Engine")
+st.title("Gunrocks-Grid-Aggie Housing Analysis")
 st.caption("Find the best UC Davis housing based on rent, campus proximity, and amenities.")
 
 # =========================================================
 # DATA LOADING
 # =========================================================
-DATA_PATH = "/Users/hetvi/Downloads/enriched_listings.csv"
+DATA_PATH = "/Users/hetvi/Documents/Stats/Gunrock-s-Grid/enriched_listings.csv"
 
 @st.cache_data
 def load_data(path):
@@ -42,7 +42,7 @@ required_cols = [
     "nearest_grocery", "nearest_grocery_dist", "nearest_campus", "nearest_campus_dist"
 ]
 
-existing_required = [c for c in required_cols if c in df.columns]
+# Drop rows with missing essential columns only
 df = df.dropna(subset=["lat", "lon", "complex_name", "price_total", "bedrooms", "price_per_bed"]).copy()
 
 # Fix numeric types where needed
@@ -61,7 +61,6 @@ for col in numeric_cols:
     if col in df.columns:
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
-df = df.dropna(subset=["price_total", "bedrooms", "price_per_bed", "lat", "lon"]).copy()
 df = df[df["price_per_bed"] > 0].copy()
 
 # Optional cleanup for booleans if present
@@ -165,7 +164,7 @@ PLACES_OF_INTEREST = [
         "name": "Davis Farmers Market",
         "lat": 38.5447,
         "lon": -121.7440,
-        "category": "social",
+        "category": "grocery",
         "description": "central park - sat mornings and wed afternoons",
         "dist_col": "dist_to_davis_farmers_market"
     },
@@ -221,35 +220,20 @@ price_range = st.sidebar.slider(
     "Price per bed ($)",
     min_value=price_min,
     max_value=price_max,
-    value=(price_min, min(price_max, 1400))
+    value=(price_min, price_max)
 )
 
 bedroom_values = sorted(df["bedrooms"].dropna().astype(int).unique().tolist())
 selected_bedrooms = st.sidebar.multiselect(
     "Bedrooms",
-    options=bedroom_values,
-    default=bedroom_values
+    options=bedroom_values
 )
-
-if "baths" in df.columns and df["baths"].notna().any():
-    bath_min = float(df["baths"].min())
-    bath_max = float(df["baths"].max())
-    baths_range = st.sidebar.slider(
-        "Bathrooms",
-        min_value=float(np.floor(bath_min)),
-        max_value=float(np.ceil(bath_max)),
-        value=(float(np.floor(bath_min)), float(np.ceil(bath_max))),
-        step=0.5
-    )
-else:
-    baths_range = None
 
 if "neighborhood" in df.columns:
     neighborhoods = sorted(df["neighborhood"].dropna().astype(str).unique().tolist())
     selected_neighborhoods = st.sidebar.multiselect(
         "Neighborhood",
-        options=neighborhoods,
-        default=neighborhoods
+        options=neighborhoods
     )
 else:
     selected_neighborhoods = []
@@ -277,8 +261,7 @@ if "laundry_type" in df.columns:
     laundry_options = sorted(df["laundry_type"].dropna().astype(str).unique().tolist())
     selected_laundry = st.sidebar.multiselect(
         "Laundry type",
-        options=laundry_options,
-        default=laundry_options
+        options=laundry_options
     )
 else:
     selected_laundry = []
@@ -290,8 +273,7 @@ st.sidebar.header("Location Filters")
 
 location_preferences = st.sidebar.multiselect(
     "Only show housing near these places",
-    options=places_df["name"].tolist(),
-    default=["Memorial Union (MU)", "Silo"]
+    options=places_df["name"].tolist()
 )
 
 default_max_dists = {}
@@ -318,14 +300,12 @@ social_weight = st.sidebar.slider("Weight: Social / downtown access", 0.0, 1.0, 
 
 poi_priority_names = st.sidebar.multiselect(
     "Extra places to prioritize in score",
-    options=places_df["name"].tolist(),
-    default=["Memorial Union (MU)", "Trader Joes", "Downtown Davis (3rd & G St)"]
+    options=places_df["name"].tolist()
 )
 
 st.sidebar.subheader("Optional keyword amenities")
 desired_amenities_text = st.sidebar.text_input(
-    "Enter amenities you want (comma-separated)",
-    value="pool, gym"
+    "Enter amenities you want (comma-separated)"
 )
 desired_amenities = [x.strip().lower() for x in desired_amenities_text.split(",") if x.strip()]
 
@@ -341,12 +321,6 @@ filtered = filtered[
 
 if selected_bedrooms:
     filtered = filtered[filtered["bedrooms"].astype(int).isin(selected_bedrooms)]
-
-if baths_range is not None and "baths" in filtered.columns:
-    filtered = filtered[
-        (filtered["baths"] >= baths_range[0]) &
-        (filtered["baths"] <= baths_range[1])
-    ]
 
 if selected_neighborhoods and "neighborhood" in filtered.columns:
     filtered = filtered[filtered["neighborhood"].astype(str).isin(selected_neighborhoods)]
@@ -497,25 +471,18 @@ if len(filtered) > 0:
         size_max=22,
         zoom=12,
         center={"lat": 38.5449, "lon": -121.7405},
-        hover_name="complex_name",
+        hover_name="address",
         hover_data={
-            "address": True if "address" in filtered.columns else False,
-            "price_total": ":.0f",
             "price_per_bed": ":.0f",
-            "bedrooms": True,
-            "baths": True if "baths" in filtered.columns else False,
-            "sqft": True if "sqft" in filtered.columns else False,
-            "neighborhood": True if "neighborhood" in filtered.columns else False,
-            "rent_score": ":.1f",
-            "campus_score": ":.1f",
-            "grocery_score": ":.1f",
-            "social_score": ":.1f",
-            "priority_places_score": ":.1f",
-            "amenity_match_score": ":.1f",
-            "student_score": ":.1f",
+            "price_total": ":.0f",
+            "nearest_campus_dist": ":.2f",
+            "nearest_grocery": True,
+            "nearest_grocery_dist": ":.2f",
+            "address": False,
             "lat": False,
             "lon": False
         },
+        color_continuous_scale="Plasma",
         title="Student Value Score Map"
     )
 
@@ -535,10 +502,11 @@ if len(filtered) > 0:
                 lon=subset["lon"],
                 mode="markers+text",
                 text=subset["name"],
-                textposition="top right",
+                textposition="top center",
                 marker=dict(
                     size=13,
-                    symbol=category_symbols.get(category, "marker")
+                    symbol=category_symbols.get(category, "marker"),
+                    color="red"
                 ),
                 name=category.capitalize(),
                 customdata=subset[["description"]],
@@ -549,9 +517,10 @@ if len(filtered) > 0:
     fig.update_layout(
         map_style="open-street-map",
         template="plotly_white",
-        margin={"r": 0, "t": 50, "l": 0, "b": 0},
+        margin={"r": 50, "t": 50, "l": 0, "b": 0},
         title=dict(x=0.5, xanchor="center"),
-        legend_title_text="Map Layers"
+        legend_title_text="Map Layers",
+        legend=dict(x=0.5, y=-0.1, xanchor="center", yanchor="top", orientation="h")
     )
 
     st.plotly_chart(fig, use_container_width=True)
@@ -586,7 +555,7 @@ if len(filtered) > 0:
             y="price_per_bed",
             title="Average Price per Bed by Bedrooms"
         )
-        fig_bar.update_layout(template="plotly_white")
+        fig_bar.update_layout(template="plotly_white", xaxis=dict(dtick=1))
         st.plotly_chart(fig_bar, use_container_width=True)
 
     with right:
@@ -595,9 +564,10 @@ if len(filtered) > 0:
                 filtered,
                 x="neighborhood",
                 y="price_per_bed",
-                title="Price per Bed by Neighborhood"
+                title="Price per Bed by Neighborhood",
+                color="neighborhood"
             )
-            fig_nb.update_layout(template="plotly_white")
+            fig_nb.update_layout(template="plotly_white", showlegend=False)
             st.plotly_chart(fig_nb, use_container_width=True)
 
 else:
