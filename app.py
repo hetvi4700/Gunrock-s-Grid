@@ -9,7 +9,8 @@ import streamlit as st
 # =========================================================
 st.set_page_config(
     page_title="Gunrocks-Grid-Aggie Housing Analysis",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
 st.title("Gunrocks-Grid-Aggie Housing Analysis")
@@ -22,30 +23,17 @@ DATA_PATH = "/Users/hetvi/Documents/Stats/Gunrock-s-Grid/enriched_listings.csv"
 
 @st.cache_data
 def load_data(path):
-    df = pd.read_csv(path)
-    return df
+    return pd.read_csv(path)
 
 df = load_data(DATA_PATH)
 
 # =========================================================
 # BASIC CLEANING
 # =========================================================
-required_cols = [
-    "complex_name", "address", "price_total", "bedrooms", "baths", "sqft",
-    "lat", "lon", "neighborhood", "price_per_bed", "price_per_sqft",
-    "dist_to_memorial_union_mu", "dist_to_silo", "dist_to_shields_library",
-    "dist_to_arc_activities_and_recreation_center", "dist_to_student_health_center",
-    "dist_to_trader_joes", "dist_to_safeway_north",
-    "dist_to_nugget_markets_east_covell", "dist_to_davis_food_co-op",
-    "dist_to_target", "dist_to_downtown_davis_3rd_and_g_st",
-    "dist_to_davis_farmers_market", "dist_to_davis_amtrak_station",
-    "nearest_grocery", "nearest_grocery_dist", "nearest_campus", "nearest_campus_dist"
-]
+df = df.dropna(
+    subset=["listing_id", "lat", "lon", "complex_name", "price_total", "bedrooms", "price_per_bed"]
+).copy()
 
-# Drop rows with missing essential columns only
-df = df.dropna(subset=["lat", "lon", "complex_name", "price_total", "bedrooms", "price_per_bed"]).copy()
-
-# Fix numeric types where needed
 numeric_cols = [
     "price_total", "bedrooms", "baths", "sqft", "lat", "lon",
     "price_per_bed", "price_per_sqft",
@@ -57,13 +45,13 @@ numeric_cols = [
     "dist_to_davis_farmers_market", "dist_to_davis_amtrak_station",
     "nearest_grocery_dist", "nearest_campus_dist"
 ]
+
 for col in numeric_cols:
     if col in df.columns:
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
 df = df[df["price_per_bed"] > 0].copy()
 
-# Optional cleanup for booleans if present
 for col in ["pets_allowed", "has_parking"]:
     if col in df.columns:
         df[col] = df[col].astype(str).str.strip().str.lower()
@@ -179,9 +167,13 @@ PLACES_OF_INTEREST = [
 ]
 
 places_df = pd.DataFrame(PLACES_OF_INTEREST)
-
-# Keep only POIs whose distance columns exist in dataset
 places_df = places_df[places_df["dist_col"].isin(df.columns)].copy()
+
+# =========================================================
+# SESSION STATE
+# =========================================================
+if "selected_listing_ids" not in st.session_state:
+    st.session_state.selected_listing_ids = []
 
 # =========================================================
 # HELPERS
@@ -190,10 +182,13 @@ def minmax_score(series, higher_is_better=False):
     s = pd.to_numeric(series, errors="coerce")
     if s.notna().sum() == 0:
         return pd.Series(np.zeros(len(s)), index=s.index)
+
     s_min = s.min()
     s_max = s.max()
+
     if pd.isna(s_min) or pd.isna(s_max) or s_max == s_min:
         return pd.Series(np.full(len(s), 50.0), index=s.index)
+
     norm = (s - s_min) / (s_max - s_min)
     return norm * 100 if higher_is_better else (1 - norm) * 100
 
@@ -238,7 +233,6 @@ if "neighborhood" in df.columns:
 else:
     selected_neighborhoods = []
 
-# Pets
 if "pets_allowed" in df.columns:
     pets_filter = st.sidebar.selectbox(
         "Pets allowed",
@@ -247,7 +241,6 @@ if "pets_allowed" in df.columns:
 else:
     pets_filter = "Any"
 
-# Parking
 if "has_parking" in df.columns:
     parking_filter = st.sidebar.selectbox(
         "Parking",
@@ -256,7 +249,6 @@ if "has_parking" in df.columns:
 else:
     parking_filter = "Any"
 
-# Laundry
 if "laundry_type" in df.columns:
     laundry_options = sorted(df["laundry_type"].dropna().astype(str).unique().tolist())
     selected_laundry = st.sidebar.multiselect(
@@ -278,9 +270,8 @@ location_preferences = st.sidebar.multiselect(
 
 default_max_dists = {}
 for place_name in location_preferences:
-    st.sidebar.markdown(f"**Max distance to {place_name}**")
     default_max_dists[place_name] = st.sidebar.slider(
-        f"{place_name}",
+        f"Max distance to {place_name}",
         min_value=0.1,
         max_value=8.0,
         value=2.0,
@@ -340,7 +331,6 @@ if parking_filter != "Any" and "has_parking" in filtered.columns:
 if selected_laundry and "laundry_type" in filtered.columns:
     filtered = filtered[filtered["laundry_type"].astype(str).isin(selected_laundry)]
 
-# Apply location filters
 if location_preferences:
     for place_name in location_preferences:
         row = places_df[places_df["name"] == place_name]
@@ -371,10 +361,8 @@ else:
 # BUILD DYNAMIC SCORES
 # =========================================================
 if len(filtered) > 0:
-    # Rent
     filtered["rent_score"] = minmax_score(filtered["price_per_bed"], higher_is_better=False)
 
-    # Campus
     campus_candidates = [
         c for c in [
             "dist_to_memorial_union_mu",
@@ -387,18 +375,20 @@ if len(filtered) > 0:
     else:
         filtered["campus_score"] = 50.0
 
-    # Grocery
     if "nearest_grocery_dist" in filtered.columns:
         filtered["grocery_score"] = minmax_score(filtered["nearest_grocery_dist"], higher_is_better=False)
     else:
-        grocery_cols = [p["dist_col"] for _, p in places_df[places_df["category"] == "grocery"].iterrows() if p["dist_col"] in filtered.columns]
+        grocery_cols = [
+            p["dist_col"]
+            for _, p in places_df[places_df["category"] == "grocery"].iterrows()
+            if p["dist_col"] in filtered.columns
+        ]
         if grocery_cols:
             filtered["nearest_grocery_dynamic"] = filtered[grocery_cols].min(axis=1)
             filtered["grocery_score"] = minmax_score(filtered["nearest_grocery_dynamic"], higher_is_better=False)
         else:
             filtered["grocery_score"] = 50.0
 
-    # Social
     social_cols = [c for c in ["dist_to_downtown_davis_3rd_and_g_st", "dist_to_davis_farmers_market"] if c in filtered.columns]
     if social_cols:
         filtered["social_min_dist"] = filtered[social_cols].min(axis=1)
@@ -406,7 +396,6 @@ if len(filtered) > 0:
     else:
         filtered["social_score"] = 50.0
 
-    # User-prioritized places
     selected_priority_cols = []
     for place_name in poi_priority_names:
         row = places_df[places_df["name"] == place_name]
@@ -421,7 +410,6 @@ if len(filtered) > 0:
     else:
         filtered["priority_places_score"] = 50.0
 
-    # Base category weights
     base_weights = normalize_weights({
         "rent_score": rent_weight,
         "campus_score": campus_weight,
@@ -436,7 +424,6 @@ if len(filtered) > 0:
         filtered["social_score"] * base_weights["social_score"]
     )
 
-    # Final score: include amenities + explicit place priorities
     filtered["student_score"] = (
         0.75 * filtered["base_score"] +
         0.15 * filtered["priority_places_score"] +
@@ -459,9 +446,24 @@ else:
     c4.metric("Best score", "N/A")
 
 # =========================================================
-# MAP
+# MAP + TABLE + ORIGINAL TWO GRAPHS
 # =========================================================
 if len(filtered) > 0:
+    hover_data_dict = {
+        "price_per_bed": ":.0f",
+        "price_total": ":.0f",
+        "address": False,
+        "lat": False,
+        "lon": False
+    }
+
+    if "nearest_campus_dist" in filtered.columns:
+        hover_data_dict["nearest_campus_dist"] = ":.2f"
+    if "nearest_grocery" in filtered.columns:
+        hover_data_dict["nearest_grocery"] = True
+    if "nearest_grocery_dist" in filtered.columns:
+        hover_data_dict["nearest_grocery_dist"] = ":.2f"
+
     fig = px.scatter_map(
         filtered,
         lat="lat",
@@ -472,16 +474,7 @@ if len(filtered) > 0:
         zoom=12,
         center={"lat": 38.5449, "lon": -121.7405},
         hover_name="address",
-        hover_data={
-            "price_per_bed": ":.0f",
-            "price_total": ":.0f",
-            "nearest_campus_dist": ":.2f",
-            "nearest_grocery": True,
-            "nearest_grocery_dist": ":.2f",
-            "address": False,
-            "lat": False,
-            "lon": False
-        },
+        hover_data=hover_data_dict,
         color_continuous_scale="Plasma",
         title="Student Value Score Map"
     )
@@ -526,23 +519,61 @@ if len(filtered) > 0:
     st.plotly_chart(fig, use_container_width=True)
 
     # =====================================================
-    # TABLE OF TOP RECOMMENDATIONS
+    # TABLE OF TOP RECOMMENDATIONS WITH DIRECT ROW SELECTION
     # =====================================================
     st.subheader("Top Recommendations")
+    st.write("Select up to 3 listings directly from the table below, then click Compare Selected.")
 
     rec_cols = [
         c for c in [
-            "complex_name", "address", "neighborhood", "price_total", "price_per_bed",
+            "listing_id", "complex_name", "address", "neighborhood", "price_total", "price_per_bed",
             "bedrooms", "baths", "sqft", "nearest_grocery", "nearest_grocery_dist",
             "nearest_campus", "nearest_campus_dist", "student_score"
         ] if c in filtered.columns
     ]
 
     top_recs = filtered.sort_values("student_score", ascending=False)[rec_cols].head(15).copy()
-    st.dataframe(top_recs, use_container_width=True)
+    top_recs = top_recs.reset_index(drop=True)
+
+    event = st.dataframe(
+        top_recs,
+        use_container_width=True,
+        hide_index=True,
+        on_select="rerun",
+        selection_mode="multi-row",
+        key="top_recommendations_table"
+    )
+
+    selected_rows = []
+    if event is not None and hasattr(event, "selection"):
+        selected_rows = event.selection.rows
+
+    selected_rows = selected_rows[:3]
+
+    if selected_rows:
+        st.session_state.selected_listing_ids = top_recs.iloc[selected_rows]["listing_id"].tolist()
+    else:
+        st.session_state.selected_listing_ids = []
+
+    col1, col2, col3 = st.columns([1, 1, 3])
+
+    with col1:
+        if 0 < len(st.session_state.selected_listing_ids) <= 3:
+            if st.button("🔍 Compare Selected", use_container_width=True):
+                st.switch_page("pages/1_Compare.py")
+        else:
+            st.button("🔍 Compare Selected", use_container_width=True, disabled=True)
+
+    with col2:
+        if st.button("Clear Selection", use_container_width=True):
+            st.session_state.selected_listing_ids = []
+            st.rerun()
+
+    if st.session_state.selected_listing_ids:
+        st.info(f"✓ {len(st.session_state.selected_listing_ids)} listing(s) selected for comparison")
 
     # =====================================================
-    # OPTIONAL CHARTS
+    # ORIGINAL TWO GRAPHS BELOW THE TABLE
     # =====================================================
     st.subheader("Quick Insights")
 
