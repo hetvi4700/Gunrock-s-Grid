@@ -19,7 +19,7 @@ st.caption("Find the best UC Davis housing based on rent, campus proximity, and 
 # =========================================================
 # DATA LOADING
 # =========================================================
-DATA_PATH = "/Users/hetvi/Documents/Stats/Gunrock-s-Grid/enriched_listings.csv"
+DATA_PATH = "./enriched_listings.csv"
 
 @st.cache_data
 def load_data(path):
