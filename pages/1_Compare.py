@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 
 # =========================================================
@@ -16,48 +17,50 @@ st.title("Compare Housing Listings")
 st.caption("Compare up to 3 selected listings side-by-side")
 
 # =========================================================
-# DATA LOADING
-# =========================================================
-DATA_PATH = "/Users/hetvi/Documents/Stats/Gunrock-s-Grid/enriched_listings.csv"
-
-@st.cache_data
-def load_data(path):
-    return pd.read_csv(path)
-
-df = load_data(DATA_PATH)
-
-# =========================================================
-# BASIC CLEANING
-# =========================================================
-df = df.dropna(
-    subset=["listing_id", "lat", "lon", "complex_name", "address", "price_total", "bedrooms", "price_per_bed"]
-).copy()
-
-numeric_cols = [
-    "price_total", "bedrooms", "baths", "sqft", "lat", "lon",
-    "price_per_bed", "price_per_sqft",
-    "dist_to_memorial_union_mu", "dist_to_silo", "dist_to_shields_library",
-    "dist_to_arc_activities_and_recreation_center", "dist_to_student_health_center",
-    "dist_to_trader_joes", "dist_to_safeway_north",
-    "dist_to_nugget_markets_east_covell", "dist_to_davis_food_co-op",
-    "dist_to_target", "dist_to_downtown_davis_3rd_and_g_st",
-    "dist_to_davis_farmers_market", "dist_to_davis_amtrak_station",
-    "nearest_grocery_dist", "nearest_campus_dist"
-]
-
-for col in numeric_cols:
-    if col in df.columns:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
-
-df = df[df["price_per_bed"] > 0].copy()
-
-for col in ["pets_allowed", "has_parking"]:
-    if col in df.columns:
-        df[col] = df[col].astype(str).str.strip().str.lower()
-
-# =========================================================
 # HELPERS
 # =========================================================
+def normalize_listing_id(x):
+    if pd.isna(x):
+        return None
+    return str(x).strip()
+
+
+def preprocess_df(df):
+    required_subset = [
+        "listing_id", "lat", "lon", "complex_name",
+        "address", "price_total", "bedrooms", "price_per_bed"
+    ]
+    existing_required_subset = [c for c in required_subset if c in df.columns]
+    df = df.dropna(subset=existing_required_subset).copy()
+
+    numeric_cols = [
+        "price_total", "bedrooms", "baths", "sqft", "lat", "lon",
+        "price_per_bed", "price_per_sqft",
+        "dist_to_memorial_union_mu", "dist_to_silo", "dist_to_shields_library",
+        "dist_to_arc_activities_and_recreation_center", "dist_to_student_health_center",
+        "dist_to_trader_joes", "dist_to_safeway_north",
+        "dist_to_nugget_markets_east_covell", "dist_to_davis_food_co-op",
+        "dist_to_target", "dist_to_downtown_davis_3rd_and_g_st",
+        "dist_to_davis_farmers_market", "dist_to_davis_amtrak_station",
+        "nearest_grocery_dist", "nearest_campus_dist"
+    ]
+
+    for col in numeric_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    df["listing_id"] = df["listing_id"].apply(normalize_listing_id)
+    df = df[df["listing_id"].notna()].copy()
+    df = df[df["price_per_bed"] > 0].copy()
+    df = df.drop_duplicates(subset="listing_id", keep="first").copy()
+
+    for col in ["pets_allowed", "has_parking"]:
+        if col in df.columns:
+            df[col] = df[col].astype(str).str.strip().str.lower()
+
+    return df
+
+
 def minmax_score(series, higher_is_better=False):
     s = pd.to_numeric(series, errors="coerce")
     if s.notna().sum() == 0:
@@ -84,6 +87,17 @@ def yes_no_pretty(val):
     return str(val)
 
 
+def amenity_icon(val):
+    if pd.isna(val):
+        return "N/A"
+    s = str(val).strip().lower()
+    if any(x in s for x in ["yes", "true", "allowed"]):
+        return "✅"
+    if any(x in s for x in ["no", "false"]):
+        return "❌"
+    return str(val)
+
+
 def build_metric_row(df_in, label, col_name, fmt="text", higher_better=None):
     if col_name not in df_in.columns:
         return None
@@ -103,7 +117,12 @@ def build_metric_row(df_in, label, col_name, fmt="text", higher_better=None):
     else:
         formatted = values.fillna("N/A").astype(str)
 
-    row = pd.DataFrame([formatted.values], columns=df_in["address"].tolist(), index=[label])
+    display_cols = [
+        f"{addr} ({lid})"
+        for addr, lid in zip(df_in["address"], df_in["listing_id"])
+    ]
+
+    row = pd.DataFrame([formatted.values], columns=display_cols, index=[label])
 
     if higher_better is not None:
         valid = pd.to_numeric(values, errors="coerce")
@@ -112,7 +131,7 @@ def build_metric_row(df_in, label, col_name, fmt="text", higher_better=None):
             best_mask = valid == best_val
             for i, is_best in enumerate(best_mask):
                 if is_best:
-                    col = df_in["address"].iloc[i]
+                    col = display_cols[i]
                     row.loc[label, col] = f"⭐ {row.loc[label, col]}"
 
     return row
@@ -123,7 +142,22 @@ def style_comparison_table(comp_table):
         if isinstance(val, str) and val.startswith("⭐"):
             return "background-color: #dff6dd; font-weight: 600;"
         return ""
-    return comp_table.style.map(highlight_star)
+
+    comp_table = comp_table.reset_index().rename(columns={"index": "Metric"})
+    return comp_table.style.applymap(highlight_star)
+
+
+# =========================================================
+# DATA LOADING
+# =========================================================
+DATA_PATH = "./enriched_listings.csv"
+
+@st.cache_data
+def load_data(path):
+    return pd.read_csv(path)
+
+df = load_data(DATA_PATH)
+df = preprocess_df(df)
 
 # =========================================================
 # SCORE CALCULATION
@@ -156,6 +190,8 @@ df["student_score"] = (
 # LOAD SELECTED IDS
 # =========================================================
 selected_listing_ids = st.session_state.get("selected_listing_ids", [])
+selected_listing_ids = [normalize_listing_id(x) for x in selected_listing_ids]
+selected_listing_ids = [x for x in selected_listing_ids if x is not None]
 
 if not selected_listing_ids:
     st.warning("No listings were selected on the main page. Go back and select up to 3 rows from the recommendations table.")
@@ -167,10 +203,19 @@ if comparison_data.empty:
     st.warning("The selected listing IDs were not found in the dataset.")
     st.stop()
 
-comparison_data["listing_id"] = comparison_data["listing_id"].astype(str)
-selected_listing_ids = [str(x) for x in selected_listing_ids]
+found_ids = set(comparison_data["listing_id"].tolist())
+valid_ids = [i for i in selected_listing_ids if i in found_ids]
+missing_ids = [i for i in selected_listing_ids if i not in found_ids]
 
-comparison_data = comparison_data.set_index("listing_id").loc[selected_listing_ids].reset_index()
+if not valid_ids:
+    st.warning("None of the selected listings were found in the dataset.")
+    st.stop()
+
+if missing_ids:
+    st.warning(f"Some selected listings were not found and were skipped: {', '.join(missing_ids)}")
+
+order_df = pd.DataFrame({"listing_id": valid_ids})
+comparison_data = order_df.merge(comparison_data, on="listing_id", how="inner")
 
 st.success(f"Loaded {len(comparison_data)} listing(s) from the main page.")
 
@@ -187,6 +232,8 @@ metric_cols[1].metric("Lowest Price / Bed", comparison_data.loc[cheapest_idx, "a
 if "nearest_campus_dist" in comparison_data.columns and comparison_data["nearest_campus_dist"].notna().sum() > 0:
     closest_campus_idx = comparison_data["nearest_campus_dist"].idxmin()
     metric_cols[2].metric("Closest to Campus", comparison_data.loc[closest_campus_idx, "address"])
+else:
+    metric_cols[2].metric("Closest to Campus", "N/A")
 
 # =========================================================
 # TABS
@@ -216,9 +263,6 @@ with tab1:
         ("Nearest Grocery", "nearest_grocery", "text", None),
         ("Distance to Grocery", "nearest_grocery_dist", "float2", False),
         ("Distance to Downtown", "dist_to_downtown_davis_3rd_and_g_st", "float2", False),
-        ("Pets Allowed", "pets_allowed", "bool", None),
-        ("Parking", "has_parking", "bool", None),
-        ("Laundry Type", "laundry_type", "text", None),
         ("Student Score", "student_score", "float1", True),
     ]
 
@@ -233,43 +277,70 @@ with tab1:
     else:
         st.warning("No comparable columns found for the selected listings.")
 
+    st.write("### Amenities Comparison")
+
+    amenity_cols = ["address"]
+    for col in ["pets_allowed", "has_parking", "laundry_type"]:
+        if col in comparison_data.columns:
+            amenity_cols.append(col)
+
+    amenities_df = comparison_data[amenity_cols].copy()
+
+    if "pets_allowed" in amenities_df.columns:
+        amenities_df["pets_allowed"] = amenities_df["pets_allowed"].apply(amenity_icon)
+
+    if "has_parking" in amenities_df.columns:
+        amenities_df["has_parking"] = amenities_df["has_parking"].apply(amenity_icon)
+
+    amenities_df = amenities_df.rename(columns={
+        "address": "Listing",
+        "pets_allowed": "Pets Allowed",
+        "has_parking": "Parking",
+        "laundry_type": "Laundry Type"
+    })
+
+    st.dataframe(amenities_df, use_container_width=True, hide_index=True)
+
 # =========================================================
 # TAB 2: SCORE BREAKDOWN
 # =========================================================
 with tab2:
     st.write("### Score breakdown")
 
-    score_data = comparison_data[["address", "rent_score", "campus_score", "grocery_score", "social_score", "student_score"]].copy()
-    score_long = score_data.melt(
-        id_vars="address",
-        var_name="metric",
-        value_name="score"
-    )
+    score_cols = ["address", "rent_score", "campus_score", "grocery_score", "social_score"]
+    available_score_cols = [c for c in score_cols if c in comparison_data.columns]
 
-    score_long["metric"] = score_long["metric"].map({
-        "rent_score": "Rent",
-        "campus_score": "Campus",
-        "grocery_score": "Grocery",
-        "social_score": "Social",
-        "student_score": "Overall"
-    })
+    if len(available_score_cols) >= 2:
+        score_data = comparison_data[available_score_cols].copy()
+        score_long = score_data.melt(
+            id_vars="address",
+            var_name="metric",
+            value_name="score"
+        )
 
-    fig_scores = px.bar(
-        score_long,
-        x="metric",
-        y="score",
-        color="address",
-        barmode="group",
-        title="Score Breakdown by Listing",
-        color_discrete_sequence=px.colors.qualitative.Set1
-    )
-    fig_scores.update_layout(
-        template="plotly_white",
-        xaxis_title="",
-        yaxis_title="Score",
-        legend_title_text="Address"
-    )
-    st.plotly_chart(fig_scores, use_container_width=True)
+        score_long["metric"] = score_long["metric"].map({
+            "rent_score": "Rent",
+            "campus_score": "Campus",
+            "grocery_score": "Grocery",
+            "social_score": "Social"
+        })
+
+        fig_scores = px.bar(
+            score_long,
+            x="metric",
+            y="score",
+            color="address",
+            barmode="group",
+            title="Score Breakdown by Listing",
+            color_discrete_sequence=px.colors.qualitative.Set1
+        )
+        fig_scores.update_layout(
+            template="plotly_white",
+            xaxis_title="",
+            yaxis_title="Score",
+            legend_title_text="Address"
+        )
+        st.plotly_chart(fig_scores, use_container_width=True)
 
     raw_cols = [
         c for c in [
@@ -387,9 +458,49 @@ with tab3:
         )
         st.plotly_chart(fig_dist, use_container_width=True)
 
-    value_metrics = [
-        c for c in ["sqft", "bedrooms", "baths"] if c in comparison_data.columns
+    radar_candidates = [
+        ("dist_to_memorial_union_mu", "MU"),
+        ("dist_to_trader_joes", "Trader Joe's"),
+        ("dist_to_downtown_davis_3rd_and_g_st", "Downtown"),
+        ("dist_to_arc_activities_and_recreation_center", "ARC")
     ]
 
-    if value_metrics:
+    radar_metrics = [(col, label) for col, label in radar_candidates if col in comparison_data.columns]
+
+    if len(radar_metrics) >= 3 and len(comparison_data) <= 3:
+        st.write("### Proximity Comparison (Radar Chart)")
+        st.caption("Smaller radius means the listing is closer to important places.")
+
+        fig_radar = go.Figure()
+
+        for _, row in comparison_data.iterrows():
+            theta = [label for _, label in radar_metrics]
+            r = [row[col] if pd.notna(row[col]) else 0 for col, _ in radar_metrics]
+
+            theta_closed = theta + [theta[0]]
+            r_closed = r + [r[0]]
+
+            fig_radar.add_trace(go.Scatterpolar(
+                r=r_closed,
+                theta=theta_closed,
+                fill="toself",
+                name=row["address"],
+                hovertemplate="<b>%{fullData.name}</b><br>%{theta}: %{r:.2f} miles<extra></extra>"
+            ))
+
+        fig_radar.update_layout(
+            template="plotly_white",
+            polar=dict(
+                radialaxis=dict(
+                    visible=True,
+                    title="Distance (miles)"
+                )
+            ),
+            title="Walkability / Proximity Profile",
+            legend_title_text="Address"
+        )
+
+        st.plotly_chart(fig_radar, use_container_width=True)
+
+    if any(c in comparison_data.columns for c in ["sqft", "bedrooms", "baths"]):
         st.write("_Space and layout metrics are available in the comparison table above._")

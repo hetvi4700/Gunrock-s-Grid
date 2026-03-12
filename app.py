@@ -480,32 +480,37 @@ if len(filtered) > 0:
     )
 
     category_symbols = {
-        "campus": "star",
-        "grocery": "marker",
-        "social": "circle",
-        "transit": "square"
-    }
-
+    "campus": "star",
+    "grocery": "marker",
+    "social": "square",
+    "transit": "triangle"
+}
+    category_colors = {
+    "campus": "red",
+    "grocery": "green",
+    "social": "skyblue",
+    "transit": "orange"
+    }   
     for category in places_df["category"].unique():
         subset = places_df[places_df["category"] == category]
 
         fig.add_trace(
             go.Scattermap(
-                lat=subset["lat"],
-                lon=subset["lon"],
-                mode="markers+text",
-                text=subset["name"],
-                textposition="top center",
-                marker=dict(
-                    size=13,
-                    symbol=category_symbols.get(category, "marker"),
-                    color="red"
-                ),
-                name=category.capitalize(),
-                customdata=subset[["description"]],
-                hovertemplate="<b>%{text}</b><br>%{customdata[0]}<extra></extra>"
-            )
+            lat=subset["lat"],
+            lon=subset["lon"],
+            mode="markers+text",
+            text=subset["name"],
+            textposition="top center",
+            marker=dict(
+                size=14,
+                symbol=category_symbols.get(category, "circle"),
+                color="gray"
+            ),
+            name=category.capitalize(),
+            customdata=subset[["description"]],
+            hovertemplate="<b>%{text}</b><br>%{customdata[0]}<extra></extra>"
         )
+    )
 
     fig.update_layout(
         map_style="open-street-map",
@@ -515,7 +520,7 @@ if len(filtered) > 0:
         legend_title_text="Map Layers",
         legend=dict(x=0.5, y=-0.1, xanchor="center", yanchor="top", orientation="h")
     )
-
+   
     st.plotly_chart(fig, use_container_width=True)
 
     # =====================================================
@@ -555,7 +560,7 @@ if len(filtered) > 0:
     else:
         st.session_state.selected_listing_ids = []
 
-    col1, col2, col3 = st.columns([1, 1, 3])
+    col1, col2, col3 = st.columns([2, 2, 4])
 
     with col1:
         if 0 < len(st.session_state.selected_listing_ids) <= 3:
