@@ -289,6 +289,11 @@ campus_weight = st.sidebar.slider("Weight: Campus proximity", 0.0, 1.0, 0.30, 0.
 grocery_weight = st.sidebar.slider("Weight: Grocery access", 0.0, 1.0, 0.15, 0.05)
 social_weight = st.sidebar.slider("Weight: Social / downtown access", 0.0, 1.0, 0.10, 0.05)
 
+st.session_state["rent_weight"] = rent_weight
+st.session_state["campus_weight"] = campus_weight
+st.session_state["grocery_weight"] = grocery_weight
+st.session_state["social_weight"] = social_weight
+
 poi_priority_names = st.sidebar.multiselect(
     "Extra places to prioritize in score",
     options=places_df["name"].tolist()
